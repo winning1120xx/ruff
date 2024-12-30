@@ -26,7 +26,6 @@ mod semantic_model;
 pub(crate) mod site_packages;
 mod stdlib;
 mod suppression;
-pub(crate) mod symbol;
 pub mod types;
 mod unpack;
 mod util;

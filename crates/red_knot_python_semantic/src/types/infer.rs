@@ -62,11 +62,11 @@ use crate::types::mro::MroErrorKind;
 use crate::types::unpacker::{UnpackResult, Unpacker};
 use crate::types::{
     bindings_ty, builtins_symbol, declarations_ty, global_symbol, symbol, todo_type,
-    typing_extensions_symbol, Boundness, CallDunderResult, Class, ClassLiteralType, FunctionType,
+    typing_extensions_symbol, CallDunderResult, Class, ClassLiteralType, FunctionType,
     InstanceType, IntersectionBuilder, IntersectionType, IterationOutcome, KnownClass,
     KnownFunction, KnownInstanceType, MetaclassCandidate, MetaclassErrorKind, SliceLiteralType,
-    Symbol, Truthiness, TupleType, Type, TypeAliasType, TypeArrayDisplay,
-    TypeVarBoundOrConstraints, TypeVarInstance, UnionBuilder, UnionType,
+    Truthiness, TupleType, Type, TypeAliasType, TypeArrayDisplay, TypeVarBoundOrConstraints,
+    TypeVarInstance, UnionBuilder, UnionType,
 };
 use crate::unpack::Unpack;
 use crate::util::subscript::{PyIndex, PySlice};
@@ -82,6 +82,9 @@ use super::diagnostic::{
 use super::slots::check_class_slots;
 use super::string_annotation::{
     parse_string_annotation, BYTE_STRING_TYPE_ANNOTATION, FSTRING_TYPE_ANNOTATION,
+};
+use super::{
+    MemberAccessError, MemberAccessErrorKind, MemberAccessResult, NameLookupError, NameLookupResult,
 };
 
 /// Infer all types for a [`ScopeId`], including all definitions and expressions in that scope.
@@ -2371,8 +2374,15 @@ impl<'db> TypeInferenceBuilder<'db> {
         } = alias;
 
         // First try loading the requested attribute from the module.
-        if let Symbol::Type(ty, boundness) = module_ty.member(self.db(), name) {
-            if boundness == Boundness::PossiblyUnbound {
+        let declaration_ty = match module_ty.member(self.db(), name) {
+            MemberAccessResult::Ok(ty) => {
+                self.add_declaration_with_binding(alias.into(), definition, ty, ty);
+                ty
+            }
+            MemberAccessResult::Err(MemberAccessError {
+                kind: MemberAccessErrorKind::PossiblyUndefinedMember { type_when_defined },
+                ..
+            }) => {
                 // TODO: Consider loading _both_ the attribute and any submodule and unioning them
                 // together if the attribute exists but is possibly-unbound.
                 self.context.report_lint(
@@ -2380,46 +2390,51 @@ impl<'db> TypeInferenceBuilder<'db> {
                     AnyNodeRef::Alias(alias),
                     format_args!("Member `{name}` of module `{module_name}` is possibly unbound",),
                 );
+                type_when_defined
             }
-            self.add_declaration_with_binding(alias.into(), definition, ty, ty);
-            return;
+            MemberAccessResult::Err(MemberAccessError {
+                kind: MemberAccessErrorKind::UndefinedMember,
+                ..
+            }) => {
+                // If the module doesn't bind the symbol, check if it's a submodule.  This won't get
+                // handled by the `Type::member` call because it relies on the semantic index's
+                // `imported_modules` set.  The semantic index does not include information about
+                // `from...import` statements because there are two things it cannot determine while only
+                // inspecting the content of the current file:
+                //
+                //   - whether the imported symbol is an attribute or submodule
+                //   - whether the containing file is in a module or a package (needed to correctly resolve
+                //     relative imports)
+                //
+                // The first would be solvable by making it a _potentially_ imported modules set.  The
+                // second is not.
+                //
+                // Regardless, for now, we sidestep all of that by repeating the submodule-or-attribute
+                // check here when inferring types for a `from...import` statement.
+                let mut ty = Type::Unknown;
+                let mut report_diagnostic = true;
+
+                if let Some(submodule_name) = ModuleName::new(name) {
+                    let mut full_submodule_name = module_name.clone();
+                    full_submodule_name.extend(&submodule_name);
+                    if let Some(submodule_ty) = self.module_ty_from_name(&full_submodule_name) {
+                        ty = submodule_ty;
+                        report_diagnostic = false;
+                    }
+                }
+
+                if report_diagnostic {
+                    self.context.report_lint(
+                        &UNRESOLVED_IMPORT,
+                        AnyNodeRef::Alias(alias),
+                        format_args!("Module `{module_name}` has no member `{name}`",),
+                    );
+                }
+
+                ty
+            }
         };
-
-        // If the module doesn't bind the symbol, check if it's a submodule.  This won't get
-        // handled by the `Type::member` call because it relies on the semantic index's
-        // `imported_modules` set.  The semantic index does not include information about
-        // `from...import` statements because there are two things it cannot determine while only
-        // inspecting the content of the current file:
-        //
-        //   - whether the imported symbol is an attribute or submodule
-        //   - whether the containing file is in a module or a package (needed to correctly resolve
-        //     relative imports)
-        //
-        // The first would be solvable by making it a _potentially_ imported modules set.  The
-        // second is not.
-        //
-        // Regardless, for now, we sidestep all of that by repeating the submodule-or-attribute
-        // check here when inferring types for a `from...import` statement.
-        if let Some(submodule_name) = ModuleName::new(name) {
-            let mut full_submodule_name = module_name.clone();
-            full_submodule_name.extend(&submodule_name);
-            if let Some(submodule_ty) = self.module_ty_from_name(&full_submodule_name) {
-                self.add_declaration_with_binding(
-                    alias.into(),
-                    definition,
-                    submodule_ty,
-                    submodule_ty,
-                );
-                return;
-            }
-        }
-
-        self.context.report_lint(
-            &UNRESOLVED_IMPORT,
-            AnyNodeRef::Alias(alias),
-            format_args!("Module `{module_name}` has no member `{name}`",),
-        );
-        self.add_unknown_declaration_with_binding(alias.into(), definition);
+        self.add_declaration_with_binding(alias.into(), definition, ty, ty);
     }
 
     fn infer_return_statement(&mut self, ret: &ast::StmtReturn) {
@@ -2557,8 +2572,7 @@ impl<'db> TypeInferenceBuilder<'db> {
                 .unwrap_or_else(|| KnownClass::Int.to_instance(self.db())),
             ast::Number::Float(_) => KnownClass::Float.to_instance(self.db()),
             ast::Number::Complex { .. } => builtins_symbol(self.db(), "complex")
-                .ignore_possibly_unbound()
-                .unwrap_or(Type::Unknown)
+                .unwrap_or_unknown()
                 .to_instance(self.db()),
         }
     }
@@ -2643,9 +2657,7 @@ impl<'db> TypeInferenceBuilder<'db> {
         &mut self,
         _literal: &ast::ExprEllipsisLiteral,
     ) -> Type<'db> {
-        builtins_symbol(self.db(), "Ellipsis")
-            .ignore_possibly_unbound()
-            .unwrap_or(Type::Unknown)
+        builtins_symbol(self.db(), "Ellipsis").unwrap_or_unknown()
     }
 
     fn infer_tuple_expression(&mut self, tuple: &ast::ExprTuple) -> Type<'db> {
@@ -3023,7 +3035,7 @@ impl<'db> TypeInferenceBuilder<'db> {
     }
 
     /// Look up a name reference that isn't bound in the local scope.
-    fn lookup_name(&mut self, name_node: &ast::ExprName) -> Symbol<'db> {
+    fn lookup_name(&mut self, name_node: &'db ast::ExprName) -> NameLookupResult<'db> {
         let ast::ExprName { id: name, .. } = name_node;
         let file_scope_id = self.scope().file_scope_id(self.db());
         let is_bound =
@@ -3040,61 +3052,66 @@ impl<'db> TypeInferenceBuilder<'db> {
         // In function-like scopes, any local variable (symbol that is bound in this scope) can
         // only have a definition in this scope, or error; it never references another scope.
         // (At runtime, it would use the `LOAD_FAST` opcode.)
-        if !is_bound || !self.scope().is_function_like(self.db()) {
-            // Walk up parent scopes looking for a possible enclosing scope that may have a
-            // definition of this name visible to us (would be `LOAD_DEREF` at runtime.)
-            for (enclosing_scope_file_id, _) in self.index.ancestor_scopes(file_scope_id) {
-                // Class scopes are not visible to nested scopes, and we need to handle global
-                // scope differently (because an unbound name there falls back to builtins), so
-                // check only function-like scopes.
-                let enclosing_scope_id =
-                    enclosing_scope_file_id.to_scope_id(self.db(), self.file());
-                if !enclosing_scope_id.is_function_like(self.db()) {
-                    continue;
-                }
-                let enclosing_symbol_table = self.index.symbol_table(enclosing_scope_file_id);
-                let Some(enclosing_symbol) = enclosing_symbol_table.symbol_by_name(name) else {
-                    continue;
-                };
-                if enclosing_symbol.is_bound() {
-                    // We can return early here, because the nearest function-like scope that
-                    // defines a name must be the only source for the nonlocal reference (at
-                    // runtime, it is the scope that creates the cell for our closure.) If the name
-                    // isn't bound in that scope, we should get an unbound name, not continue
-                    // falling back to other scopes / globals / builtins.
-                    return symbol(self.db(), enclosing_scope_id, name);
-                }
-            }
+        if is_bound || self.scope().is_function_like(self.db()) {
+            return NameLookupResult::unbound();
+        }
 
-            // No nonlocal binding, check module globals. Avoid infinite recursion if `self.scope`
-            // already is module globals.
-            let global_symbol = if file_scope_id.is_global() {
-                Symbol::Unbound
-            } else {
-                global_symbol(self.db(), self.file(), name)
+        // Walk up parent scopes looking for a possible enclosing scope that may have a
+        // definition of this name visible to us (would be `LOAD_DEREF` at runtime.)
+        for (enclosing_scope_file_id, _) in self.index.ancestor_scopes(file_scope_id) {
+            // Class scopes are not visible to nested scopes, and we need to handle global
+            // scope differently (because an unbound name there falls back to builtins), so
+            // check only function-like scopes.
+            let enclosing_scope_id = enclosing_scope_file_id.to_scope_id(self.db(), self.file());
+            if !enclosing_scope_id.is_function_like(self.db()) {
+                continue;
+            }
+            let enclosing_symbol_table = self.index.symbol_table(enclosing_scope_file_id);
+            let Some(enclosing_symbol) = enclosing_symbol_table.symbol_by_name(name) else {
+                continue;
             };
-
-            // Fallback to builtins (without infinite recursion if we're already in builtins.)
-            if global_symbol.possibly_unbound()
-                && Some(self.scope()) != builtins_module_scope(self.db())
-            {
-                let mut builtins_symbol = builtins_symbol(self.db(), name);
-                if builtins_symbol.is_unbound() && name == "reveal_type" {
-                    self.context.report_lint(
-                        &UNDEFINED_REVEAL,
-                        name_node.into(),
-                        format_args!(
-                            "`reveal_type` used without importing it; this is allowed for debugging convenience but will fail at runtime"),
-                    );
-                    builtins_symbol = typing_extensions_symbol(self.db(), name);
-                }
-
-                global_symbol.or_fall_back_to(self.db(), &builtins_symbol)
-            } else {
-                global_symbol
+            if enclosing_symbol.is_bound() {
+                // We can return early here, because the nearest function-like scope that
+                // defines a name must be the only source for the nonlocal reference (at
+                // runtime, it is the scope that creates the cell for our closure.) If the name
+                // isn't bound in that scope, we should get an unbound name, not continue
+                // falling back to other scopes / globals / builtins.
+                return symbol(self.db(), enclosing_scope_id, name);
             }
+        }
+
+        // No nonlocal binding, check module globals. Avoid infinite recursion if `self.scope`
+        // already is module globals.
+        let global_symbol = if file_scope_id.is_global() {
+            NameLookupResult::unbound()
         } else {
-            Symbol::Unbound
+            global_symbol(self.db(), self.file(), name)
+        };
+
+        if global_symbol.is_ok() {
+            return global_symbol;
+        }
+
+        // Fallback to builtins (without infinite recursion if we're already in builtins.)
+        if Some(self.scope()) != builtins_module_scope(self.db()) {
+            global_symbol.or_fall_back_to(
+                self.db(),
+                || {
+                    let mut builtins_symbol = builtins_symbol(self.db(), name);
+                    if builtins_symbol.is_err() && name == "reveal_type" {
+                        self.context.report_lint(
+                            &UNDEFINED_REVEAL,
+                            name_node.into(),
+                            format_args!(
+                                "`reveal_type` used without importing it; this is allowed for debugging convenience but will fail at runtime"),
+                        );
+                        builtins_symbol = typing_extensions_symbol(self.db(), name);
+                    }
+                    builtins_symbol
+                }
+            )
+        } else {
+            global_symbol
         }
     }
 

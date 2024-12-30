@@ -1,8 +1,7 @@
 use crate::module_resolver::{resolve_module, KnownModule};
 use crate::semantic_index::global_scope;
 use crate::semantic_index::symbol::ScopeId;
-use crate::symbol::Symbol;
-use crate::types::global_symbol;
+use crate::types::{global_symbol, NameLookupError, NameLookupResult};
 use crate::Db;
 
 /// Lookup the type of `symbol` in a given known module
@@ -11,18 +10,18 @@ use crate::Db;
 pub(crate) fn known_module_symbol<'db>(
     db: &'db dyn Db,
     known_module: KnownModule,
-    symbol: &str,
-) -> Symbol<'db> {
+    symbol: &'db str,
+) -> NameLookupResult<'db> {
     resolve_module(db, &known_module.name())
         .map(|module| global_symbol(db, module.file(), symbol))
-        .unwrap_or(Symbol::Unbound)
+        .unwrap_or(NameLookupResult::Err(NameLookupError::UndefinedName))
 }
 
 /// Lookup the type of `symbol` in the builtins namespace.
 ///
 /// Returns `Symbol::Unbound` if the `builtins` module isn't available for some reason.
 #[inline]
-pub(crate) fn builtins_symbol<'db>(db: &'db dyn Db, symbol: &str) -> Symbol<'db> {
+pub(crate) fn builtins_symbol<'db>(db: &'db dyn Db, symbol: &'db str) -> NameLookupResult<'db> {
     known_module_symbol(db, KnownModule::Builtins, symbol)
 }
 
@@ -31,7 +30,7 @@ pub(crate) fn builtins_symbol<'db>(db: &'db dyn Db, symbol: &str) -> Symbol<'db>
 /// Returns `Symbol::Unbound` if the `typing` module isn't available for some reason.
 #[inline]
 #[cfg(test)]
-pub(crate) fn typing_symbol<'db>(db: &'db dyn Db, symbol: &str) -> Symbol<'db> {
+pub(crate) fn typing_symbol<'db>(db: &'db dyn Db, symbol: &'db str) -> NameLookupResult<'db> {
     known_module_symbol(db, KnownModule::Typing, symbol)
 }
 
@@ -39,7 +38,7 @@ pub(crate) fn typing_symbol<'db>(db: &'db dyn Db, symbol: &str) -> Symbol<'db> {
 ///
 /// Returns `Symbol::Unbound` if the `typing_extensions` module isn't available for some reason.
 #[inline]
-pub(crate) fn typing_extensions_symbol<'db>(db: &'db dyn Db, symbol: &str) -> Symbol<'db> {
+pub(crate) fn typing_extensions_symbol<'db>(db: &'db dyn Db, symbol: &'db str) -> NameLookupResult<'db> {
     known_module_symbol(db, KnownModule::TypingExtensions, symbol)
 }
 

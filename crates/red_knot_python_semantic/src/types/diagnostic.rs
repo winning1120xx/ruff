@@ -21,6 +21,7 @@ use std::sync::Arc;
 /// Registers all known type check lints.
 pub(crate) fn register_lints(registry: &mut LintRegistryBuilder) {
     registry.register_lint(&CALL_NON_CALLABLE);
+    registry.register_lint(&CALL_POSSIBLY_NON_CALLABLE);
     registry.register_lint(&CALL_POSSIBLY_UNBOUND_METHOD);
     registry.register_lint(&CONFLICTING_DECLARATIONS);
     registry.register_lint(&CONFLICTING_METACLASS);
@@ -73,6 +74,24 @@ declare_lint! {
     /// 4()  # TypeError: 'int' object is not callable
     /// ```
     pub(crate) static CALL_NON_CALLABLE = {
+        summary: "detects calls to non-callable objects",
+        status: LintStatus::preview("1.0.0"),
+        default_level: Level::Error,
+    }
+}
+
+declare_lint! {
+    /// ## What it does
+    /// Checks for calls to non-callable objects.
+    ///
+    /// ## Why is this bad?
+    /// Calling a non-callable object will raise a `TypeError` at runtime.
+    ///
+    /// ## Examples
+    /// ```python
+    /// 4()  # TypeError: 'int' object is not callable
+    /// ```
+    pub(crate) static CALL_POSSIBLY_NON_CALLABLE = {
         summary: "detects calls to non-callable objects",
         status: LintStatus::preview("1.0.0"),
         default_level: Level::Error,
