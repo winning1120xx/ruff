@@ -7,13 +7,10 @@ use itertools::Itertools;
 use ruff_db::diagnostic::Severity;
 use ruff_db::files::File;
 use ruff_python_ast as ast;
-use typeops::{
-    CallDiagnostic, CallDiagnosticKind, CallErrorReason, CallErrorReasonKind,
-    ImplicitDunderCallError,
-};
 pub(crate) use typeops::{
-    CallResult, ImplicitDunderCallResult, MemberAccessError, MemberAccessErrorKind,
-    MemberAccessResult, NameLookupError, NameLookupResult, TypeOperationResult,
+    ExplicitCallResult, ImplicitDunderCallError, ImplicitDunderCallResult, MemberAccessError,
+    MemberAccessErrorKind, MemberAccessResult, NameLookupError, NameLookupResult,
+    TypeOperationResult,
 };
 
 pub(crate) use self::builder::{IntersectionBuilder, UnionBuilder};
