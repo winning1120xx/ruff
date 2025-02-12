@@ -492,7 +492,7 @@ impl<'db> TypeInferenceBuilder<'db> {
             region,
             deferred_state: DeferredExpressionState::None,
             types: TypeInference::empty(scope),
-            syntax_checker: SyntaxChecker::new(target_version.into()),
+            syntax_checker: SyntaxChecker::new(target_version),
         }
     }
 
