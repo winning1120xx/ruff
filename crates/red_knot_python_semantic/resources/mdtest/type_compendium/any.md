@@ -20,7 +20,7 @@ static_assert(not is_fully_static(Any))
 
 ```py
 from knot_extensions import static_assert, is_fully_static, is_assignable_to
-from typing_extensions import Never
+from typing_extensions import Never, Any
 
 class C: ...
 

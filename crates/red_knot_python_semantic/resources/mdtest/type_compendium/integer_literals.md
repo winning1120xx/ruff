@@ -56,6 +56,7 @@ means that all objects of the type have the same value, i.e. they compare equal 
 
 ```py
 from knot_extensions import static_assert, is_single_valued
+from typing import Literal
 
 static_assert(is_single_valued(Literal[0]))
 static_assert(is_single_valued(Literal[1]))
@@ -84,6 +85,7 @@ All integer literals are subtypes of `int`:
 
 ```py
 from knot_extensions import static_assert, is_subtype_of
+from typing import Literal
 
 static_assert(is_subtype_of(Literal[0], int))
 static_assert(is_subtype_of(Literal[1], int))
@@ -109,18 +111,20 @@ Integer literals are _not_ subtypes of `float`, but the typing spec describes a 
 expected.
 
 ```py
-from knot_extensions import static_assert, is_subtype_of
+from knot_extensions import static_assert, is_subtype_of, TypeOf
+from typing import Literal
+
+# TODO: Replace these and/or adapt the description above.
+type JustFloat = TypeOf[1.0]
+type JustComplex = TypeOf[1j]
 
 # Not subtypes of `float`
-static_assert(not is_subtype_of(Literal[0], float) and not is_subtype_of(Literal[0], complex))
-static_assert(not is_subtype_of(Literal[1], float) and not is_subtype_of(Literal[1], complex))
-static_assert(not is_subtype_of(Literal[54165], float) and not is_subtype_of(Literal[54165], complex))
+static_assert(not is_subtype_of(Literal[0], JustFloat) and not is_subtype_of(Literal[0], JustComplex))
+static_assert(not is_subtype_of(Literal[1], JustFloat) and not is_subtype_of(Literal[1], JustComplex))
+static_assert(not is_subtype_of(Literal[54165], JustFloat) and not is_subtype_of(Literal[54165], JustComplex))
 
-# TODO: This should not raise errors, see https://github.com/astral-sh/ruff/issues/14932
 def f(
-    # error: [invalid-parameter-default]
     x: float = 0,
-    # error: [invalid-parameter-default]
     y: complex = 1,
 ):
     pass
@@ -132,7 +136,7 @@ The only spellable subtypes of an integer literal type are the type itself and `
 
 ```py
 from knot_extensions import static_assert, is_subtype_of
-from typing_extensions import Never
+from typing_extensions import Never, Literal
 
 static_assert(is_subtype_of(Literal[54165], Literal[54165]))
 static_assert(is_subtype_of(Never, Literal[54165]))
@@ -144,6 +148,7 @@ Two integer literal types `Literal[a]` and `Literal[b]` are disjoint if `a != b`
 
 ```py
 from knot_extensions import static_assert, is_disjoint_from
+from typing import Literal
 
 static_assert(is_disjoint_from(Literal[0], Literal[1]))
 static_assert(is_disjoint_from(Literal[0], Literal[54165]))
