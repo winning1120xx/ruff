@@ -9,10 +9,10 @@ of these types and their properties is consistent with the specification.
 
 - [`Never`](never.md)
 - [`Object`](object.md)
-- `NoneType`
+- [`None`](none.md)
 - [Integer `Literal`s](integer_literals.md)
 - String `Literal`s, `LiteralString`
-- `tuple` types
+- [`tuple` types](tuple.md)
 - Class instance types
 - [`Any`](any.md)
 - Class literal types, `type[C]`, `type[object]`, `type[Any]`
