@@ -1247,7 +1247,6 @@ impl<'db> KnownInstanceType<'db> {
             | Self::Literal
             | Self::LiteralString
             | Self::Optional
-            | Self::TypeVar(_)
             | Self::Union
             | Self::NoReturn
             | Self::Never
@@ -1282,6 +1281,10 @@ impl<'db> KnownInstanceType<'db> {
             | Self::Not
             | Self::Intersection
             | Self::TypeOf => Truthiness::AlwaysTrue,
+
+            // TODO: For now we are treating a TypeVar as Any, which means it has ambiguous
+            // truthiness.
+            Self::TypeVar(_) => Truthiness::Ambiguous,
         }
     }
 
