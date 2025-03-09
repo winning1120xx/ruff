@@ -188,6 +188,14 @@ impl<'db> Class<'db> {
             .unwrap_or_else(|_| SubclassOfType::subclass_of_unknown())
     }
 
+    /// Return a type representing "the set of all instances of the metaclass of this class".
+    pub(super) fn metaclass_instance_type(self, db: &'db dyn Db) -> Type<'db> {
+        self
+            .metaclass(db)
+            .to_instance(db)
+            .expect("`Type::to_instance()` should always return `Some()` when called on the type of a metaclass")
+    }
+
     /// Return the metaclass of this class, or an error if the metaclass cannot be inferred.
     #[salsa::tracked]
     pub(super) fn try_metaclass(self, db: &'db dyn Db) -> Result<Type<'db>, MetaclassError<'db>> {
@@ -972,16 +980,20 @@ impl<'db> KnownClass {
         self.try_to_class_literal(db)
             .map(Type::ClassLiteral)
             .unwrap_or_else(|lookup_error| {
-                if cfg!(test) {
-                    panic!("{}", lookup_error.display(db, self));
-                } else if MESSAGES.lock().unwrap().insert(self) {
+                assert!(
+                    !cfg!(any(test, debug_assertions)),
+                    "{}",
+                    lookup_error.display(db, self)
+                );
+
+                if MESSAGES.lock().unwrap().insert(self) {
                     if matches!(
                         lookup_error,
                         KnownClassLookupError::ClassPossiblyUnbound { .. }
                     ) {
-                        tracing::warn!("{}", lookup_error.display(db, self));
+                        tracing::debug!("{}", lookup_error.display(db, self));
                     } else {
-                        tracing::warn!(
+                        tracing::debug!(
                             "{}. Falling back to `Unknown` for the symbol instead.",
                             lookup_error.display(db, self)
                         );
@@ -1717,7 +1729,7 @@ mod tests {
         }
     }
 
-    fn setup_db_with_broken_typeshed(builtins_file: &str) -> TestDb {
+    fn setup_db_with_minimal_typeshed(builtins_file: &str) -> TestDb {
         TestDbBuilder::new()
             .with_custom_typeshed("/typeshed")
             .with_file("/typeshed/stdlib/builtins.pyi", builtins_file)
@@ -1730,21 +1742,21 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not find class `builtins.int` in typeshed")]
     fn known_class_to_class_literal_panics_with_test_feature_enabled() {
-        let db = setup_db_with_broken_typeshed("class object: ...");
+        let db = setup_db_with_minimal_typeshed("class object: ...");
         KnownClass::Int.to_class_literal(&db);
     }
 
     #[test]
     #[should_panic(expected = "Could not find class `builtins.int` in typeshed")]
     fn known_class_to_instance_panics_with_test_feature_enabled() {
-        let db = setup_db_with_broken_typeshed("class object: ...");
+        let db = setup_db_with_minimal_typeshed("class object: ...");
         KnownClass::Int.to_instance(&db);
     }
 
     #[test]
     #[should_panic(expected = "found a symbol of type `Unknown | Literal[42]` instead")]
     fn known_class_to_subclass_of_panics_with_test_feature_enabled() {
-        let db = setup_db_with_broken_typeshed("int = 42");
+        let db = setup_db_with_minimal_typeshed("int = 42");
         KnownClass::Int.to_subclass_of(&db);
     }
 }
